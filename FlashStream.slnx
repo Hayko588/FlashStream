@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="FlashStream.Api/FlashStream.Api.csproj" />
+  <Project Path="FlashStream.Application.Tests/FlashStream.Application.Tests.csproj" />
+  <Project Path="FlashStream.Application/FlashStream.Application.csproj" />
+  <Project Path="FlashStream.Domain/FlashStream.Domain.csproj" />
+  <Project Path="FlashStream.Infrastructure/FlashStream.Infrastructure.csproj" />
+  <Project Path="FlashStream.Worker/FlashStream.Worker.csproj" />
+</Solution>
