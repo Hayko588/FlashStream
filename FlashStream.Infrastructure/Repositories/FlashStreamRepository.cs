@@ -8,7 +8,7 @@ namespace FlashStream.Infrastructure.Repositories;
 public sealed class FlashStreamRepository(FlashStreamDbContext database)
     : IProductRepository, IOrderRepository, IApplicationHealth
 {
-    public Task<Product?> GetByIdAsync(Guid productId, CancellationToken cancellationToken) =>
+    Task<Product?> IProductRepository.GetByIdAsync(Guid productId, CancellationToken cancellationToken) =>
         database.Products.AsNoTracking()
             .SingleOrDefaultAsync(product => product.Id == productId, cancellationToken);
 
@@ -21,14 +21,9 @@ public sealed class FlashStreamRepository(FlashStreamDbContext database)
                 order => order.UserId == userId && order.IdempotencyKey == idempotencyKey,
                 cancellationToken);
 
-    public Task<Order?> GetByIdForUserAsync(
-        Guid orderId,
-        Guid userId,
-        CancellationToken cancellationToken) =>
+    Task<Order?> IOrderRepository.GetByIdAsync(Guid orderId, CancellationToken cancellationToken) =>
         database.Orders.AsNoTracking()
-            .SingleOrDefaultAsync(
-                order => order.Id == orderId && order.UserId == userId,
-                cancellationToken);
+            .SingleOrDefaultAsync(order => order.Id == orderId, cancellationToken);
 
     public async Task<Order> CreateAsync(
         Order order,

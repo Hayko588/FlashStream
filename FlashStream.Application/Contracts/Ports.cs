@@ -15,10 +15,7 @@ public interface IOrderRepository
         string idempotencyKey,
         CancellationToken cancellationToken);
 
-    Task<Order?> GetByIdForUserAsync(
-        Guid orderId,
-        Guid userId,
-        CancellationToken cancellationToken);
+    Task<Order?> GetByIdAsync(Guid orderId, CancellationToken cancellationToken);
 
     Task<Order> CreateAsync(
         Order order,
@@ -51,7 +48,7 @@ public interface IProductService
 public interface IOrderService
 {
     Task<CreateOrderResult> CreateAsync(CreateOrderCommand command, CancellationToken cancellationToken);
-    Task<OrderResponse?> GetAsync(Guid orderId, Guid userId, CancellationToken cancellationToken);
+    Task<OrderResponse?> GetAsync(Guid orderId, CancellationToken cancellationToken);
 }
 
 public interface IHealthService

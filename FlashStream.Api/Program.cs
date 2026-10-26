@@ -1,36 +1,18 @@
 using FlashStream.Api.Filters;
-using FlashStream.Api.Options;
 using FlashStream.Api.Validation;
 using FlashStream.Application;
 using FlashStream.Application.Configuration;
 using FlashStream.Infrastructure;
 using FluentValidation;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-var authentication = builder.Configuration.GetSection(AuthenticationSettings.SectionName)
-    .Get<AuthenticationSettings>()
-    ?? throw new InvalidOperationException("Authentication configuration is required.");
-if (!Uri.TryCreate(authentication.Authority, UriKind.Absolute, out var authorityUri) ||
-    !authorityUri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
-    string.IsNullOrWhiteSpace(authorityUri.Host) ||
-    !string.IsNullOrEmpty(authorityUri.UserInfo) ||
-    string.IsNullOrWhiteSpace(authentication.Audience))
-{
-    throw new InvalidOperationException(
-        "Authentication:Authority must be an HTTPS URL and Authentication:Audience must be configured.");
-}
-
 var requestLimit = builder.Configuration.GetValue<long?>("Security:MaxRequestBodyBytes")
     ?? throw new InvalidOperationException("Security:MaxRequestBodyBytes is required.");
-var jwtClockSkewSeconds = builder.Configuration.GetValue<int?>("Security:JwtClockSkewSeconds")
-    ?? throw new InvalidOperationException("Security:JwtClockSkewSeconds is required.");
-if (requestLimit <= 0 || jwtClockSkewSeconds < 0)
+if (requestLimit <= 0)
 {
-    throw new InvalidOperationException("Security request-size and JWT clock-skew settings are invalid.");
+    throw new InvalidOperationException("Security:MaxRequestBodyBytes must be positive.");
 }
 
 builder.Services.AddApplication();
@@ -41,39 +23,6 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new OpenApiInfo { Title = "FlashStream API", Version = "v1" });
-    options.OperationFilter<AuthorizeOperationFilter>();
-    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-    {
-        Name = "Authorization",
-        Type = SecuritySchemeType.Http,
-        Scheme = "bearer",
-        BearerFormat = "JWT",
-        In = ParameterLocation.Header,
-        Description = "Enter a JWT issued by the configured identity provider."
-    });
-});
-builder.Services
-    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        options.Authority = authentication.Authority;
-        options.Audience = authentication.Audience;
-        options.RequireHttpsMetadata = true;
-        options.MapInboundClaims = false;
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ClockSkew = TimeSpan.FromSeconds(jwtClockSkewSeconds)
-        };
-    });
-builder.Services.AddAuthorization(options =>
-{
-    options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
-        .Build();
 });
 builder.Services.AddOptions<OrderPolicySettings>()
     .Bind(builder.Configuration.GetSection(OrderPolicySettings.SectionName))
@@ -110,8 +59,6 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
-app.UseAuthentication();
-app.UseAuthorization();
 app.MapControllers();
 
 app.Run();

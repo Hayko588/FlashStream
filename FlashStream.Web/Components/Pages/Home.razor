@@ -1,0 +1,472 @@
+@page "/"
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@inject IHttpClientFactory HttpClientFactory
+@inject IConfiguration Configuration
+
+<PageTitle>FlashStream · Flash sale</PageTitle>
+
+<main class="dashboard">
+    <header class="hero">
+        <div>
+            <p class="eyebrow">FLASHSTREAM · LIVE COMMERCE</p>
+            <h1>Make a little rush.</h1>
+            <p class="hero-copy">Browse the catalog, set stock, and place an order. Inventory updates in the background.</p>
+        </div>
+        <button class="button button-quiet" @onclick="LoadProductsAsync" disabled="@isLoadingProducts">
+            @(isLoadingProducts ? "Loading…" : "↻ Refresh catalog")
+        </button>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(pageError))
+    {
+        <div class="notice notice-error" role="alert">
+            <strong>Something went wrong.</strong> @pageError
+        </div>
+    }
+
+    <section class="section-heading">
+        <div>
+            <p class="eyebrow">01 / THE DROP</p>
+            <h2>Available products</h2>
+        </div>
+        <span class="count">@products.Count items</span>
+    </section>
+
+    @if (isLoadingProducts)
+    {
+        <div class="empty-state">Loading the catalog…</div>
+    }
+    else if (products.Count == 0)
+    {
+        <div class="empty-state">
+            <strong>No products yet.</strong>
+            <span>Add the first item below to open your catalog.</span>
+        </div>
+    }
+    else
+    {
+        <div class="product-grid">
+            @foreach (var product in products)
+            {
+                <article class="product-card" @key="product.Id">
+                    <div class="product-art" aria-hidden="true">F<span>.</span></div>
+                    <div class="product-info">
+                        <div>
+                            <h3>@product.Name</h3>
+                            <p class="product-id">@product.Id</p>
+                        </div>
+                        <strong class="price">@product.Price.ToString("0.00")</strong>
+                    </div>
+                    <button class="text-button" @onclick="() => SelectProduct(product.Id)">Select for order <span aria-hidden="true">↗</span></button>
+                </article>
+            }
+        </div>
+    }
+
+    <section class="section-heading section-heading-spaced">
+        <div>
+            <p class="eyebrow">02 / OPERATIONS</p>
+            <h2>Manage the drop</h2>
+        </div>
+        <span class="section-hint">Provision products and stock, then place an order.</span>
+    </section>
+
+    <div class="operations-grid">
+        <section class="panel">
+            <div class="panel-heading">
+                <span class="step-number">A</span>
+                <div><h3>Add a product</h3><p>Publish a new catalog item.</p></div>
+            </div>
+            <EditForm Model="@productForm" OnSubmit="CreateProductAsync" FormName="create-product">
+                <label for="product-name">Product name</label>
+                <InputText id="product-name" @bind-Value="productForm.Name" maxlength="200" placeholder="e.g. Studio headphones" />
+                <label for="product-price">Price</label>
+                <InputNumber id="product-price" @bind-Value="productForm.Price" min="0" step="0.01" />
+                <button class="button button-dark" type="submit" disabled="@isCreatingProduct">
+                    @(isCreatingProduct ? "Publishing…" : "Publish product")
+                </button>
+            </EditForm>
+            @if (!string.IsNullOrWhiteSpace(productMessage))
+            {
+                <p class="inline-message">@productMessage</p>
+            }
+        </section>
+
+        <section class="panel">
+            <div class="panel-heading">
+                <span class="step-number">B</span>
+                <div><h3>Set available stock</h3><p>Choose a product and set its starting quantity.</p></div>
+            </div>
+            <EditForm Model="@stockForm" OnSubmit="SetStockAsync" FormName="set-stock">
+                <label for="stock-product">Product</label>
+                <InputSelect id="stock-product" @bind-Value="selectedProductId">
+                    <option value="">Choose a product</option>
+                    @foreach (var product in products)
+                    {
+                        <option value="@product.Id">@product.Name</option>
+                    }
+                </InputSelect>
+                <label for="stock-quantity">Available quantity</label>
+                <InputNumber id="stock-quantity" @bind-Value="stockForm.AvailableQuantity" min="0" />
+                <button class="button button-dark" type="submit" disabled="@isSavingStock">
+                    @(isSavingStock ? "Saving…" : "Update stock")
+                </button>
+            </EditForm>
+            @if (!string.IsNullOrWhiteSpace(stockMessage))
+            {
+                <p class="inline-message">@stockMessage</p>
+            }
+        </section>
+
+        <section class="panel order-panel">
+            <div class="panel-heading">
+                <span class="step-number">C</span>
+                <div><h3>Place an order</h3><p>Inventory is reserved asynchronously.</p></div>
+            </div>
+            <EditForm Model="@orderForm" OnSubmit="PlaceOrderAsync" FormName="place-order">
+                <label for="order-product">Product</label>
+                <InputSelect id="order-product" @bind-Value="selectedProductId">
+                    <option value="">Choose a product</option>
+                    @foreach (var product in products)
+                    {
+                        <option value="@product.Id">@product.Name · @product.Price.ToString("0.00")</option>
+                    }
+                </InputSelect>
+                <label for="order-quantity">Quantity</label>
+                <InputNumber id="order-quantity" @bind-Value="orderForm.Quantity" min="1" max="@maximumQuantity" />
+                <button class="button button-accent" type="submit" disabled="@isPlacingOrder">
+                    @(isPlacingOrder ? "Sending order…" : "Place order")
+                </button>
+            </EditForm>
+            @if (!string.IsNullOrWhiteSpace(orderMessage))
+            {
+                <p class="inline-message">@orderMessage</p>
+            }
+            @if (currentOrder is not null)
+            {
+                <div class="order-status">
+                    <div class="status-heading">
+                        <span class="status-pill @StatusClass(currentOrder.Status)">@currentOrder.Status</span>
+                        <button class="text-button" @onclick="RefreshOrderAsync" disabled="@isRefreshingOrder">
+                            @(isRefreshingOrder ? "Checking…" : "Refresh status")
+                        </button>
+                    </div>
+                    <p>Order <code>@currentOrder.Id</code></p>
+                    @if (!string.IsNullOrWhiteSpace(currentOrder.FailureReason))
+                    {
+                        <p class="failure-reason">@currentOrder.FailureReason</p>
+                    }
+                </div>
+            }
+        </section>
+    </div>
+
+    <footer class="footer">
+        <span>FLASHSTREAM</span>
+        <span>Order events · Kafka · Inventory</span>
+    </footer>
+</main>
+
+@code {
+    private readonly List<ProductResponse> products = [];
+    private readonly Guid userId = Guid.NewGuid();
+    private int maximumQuantity = 100;
+    private readonly ProductForm productForm = new();
+    private readonly StockForm stockForm = new() { AvailableQuantity = 10 };
+    private readonly OrderForm orderForm = new();
+    private string selectedProductId = "";
+    private string? pageError;
+    private string? productMessage;
+    private string? stockMessage;
+    private string? orderMessage;
+    private bool isLoadingProducts;
+    private bool isCreatingProduct;
+    private bool isSavingStock;
+    private bool isPlacingOrder;
+    private bool isRefreshingOrder;
+    private Guid? activeIdempotencyKey;
+    private Guid? activeProductId;
+    private int? activeQuantity;
+    private OrderResponse? currentOrder;
+
+    protected override Task OnInitializedAsync()
+    {
+        maximumQuantity = Configuration.GetValue<int?>("Order:MaximumQuantity")
+            ?? throw new InvalidOperationException("Order:MaximumQuantity is required.");
+        if (maximumQuantity < 1)
+        {
+            throw new InvalidOperationException("Order:MaximumQuantity must be positive.");
+        }
+
+        return LoadProductsAsync();
+    }
+
+    private async Task LoadProductsAsync()
+    {
+        isLoadingProducts = true;
+        pageError = null;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("catalog");
+            products.Clear();
+            products.AddRange(await client.GetFromJsonAsync<List<ProductResponse>>("products") ?? []);
+        }
+        catch (HttpRequestException exception)
+        {
+            pageError = $"Catalog could not be reached. {exception.Message}";
+        }
+        finally
+        {
+            isLoadingProducts = false;
+        }
+    }
+
+    private async Task CreateProductAsync(EditContext _)
+    {
+        productMessage = null;
+        pageError = null;
+        var name = productForm.Name.Trim();
+        if (name.Length is 0 or > 200 || productForm.Price < 0)
+        {
+            productMessage = "Enter a product name (up to 200 characters) and a non-negative price.";
+            return;
+        }
+
+        isCreatingProduct = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("catalog");
+            using var response = await client.PostAsJsonAsync("products", new CreateProductRequest(name, productForm.Price));
+            if (!response.IsSuccessStatusCode)
+            {
+                productMessage = await ReadErrorAsync(response);
+                return;
+            }
+
+            var product = await response.Content.ReadFromJsonAsync<ProductResponse>()
+                ?? throw new InvalidDataException("Catalog returned an empty product response.");
+            await LoadProductsAsync();
+            selectedProductId = product.Id.ToString();
+            productForm.Name = "";
+            productForm.Price = 0;
+            productMessage = $"{product.Name} is now in the catalog.";
+        }
+        catch (HttpRequestException exception)
+        {
+            productMessage = $"Could not publish product. {exception.Message}";
+        }
+        finally
+        {
+            isCreatingProduct = false;
+        }
+    }
+
+    private async Task SetStockAsync(EditContext _)
+    {
+        stockMessage = null;
+        if (!Guid.TryParse(selectedProductId, out var productId))
+        {
+            stockMessage = "Choose a product first.";
+            return;
+        }
+
+        if (stockForm.AvailableQuantity < 0)
+        {
+            stockMessage = "Stock cannot be negative.";
+            return;
+        }
+
+        isSavingStock = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("inventory");
+            using var response = await client.PutAsJsonAsync(
+                $"inventory/{productId}",
+                new SetInventoryRequest(stockForm.AvailableQuantity));
+            stockMessage = response.IsSuccessStatusCode
+                ? $"Stock updated to {stockForm.AvailableQuantity}."
+                : await ReadErrorAsync(response);
+        }
+        catch (HttpRequestException exception)
+        {
+            stockMessage = $"Inventory could not be reached. {exception.Message}";
+        }
+        finally
+        {
+            isSavingStock = false;
+        }
+    }
+
+    private async Task PlaceOrderAsync(EditContext _)
+    {
+        orderMessage = null;
+        if (!Guid.TryParse(selectedProductId, out var productId))
+        {
+            orderMessage = "Choose a product first.";
+            return;
+        }
+
+        if (orderForm.Quantity < 1 || orderForm.Quantity > maximumQuantity)
+        {
+            orderMessage = $"Quantity must be between 1 and {maximumQuantity}.";
+            return;
+        }
+
+        if (activeIdempotencyKey is not null &&
+            (activeProductId != productId || activeQuantity != orderForm.Quantity))
+        {
+            orderMessage = "Retry the same product and quantity so the request can safely reuse its idempotency key.";
+            return;
+        }
+
+        activeIdempotencyKey ??= Guid.NewGuid();
+        activeProductId = productId;
+        activeQuantity = orderForm.Quantity;
+        isPlacingOrder = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("ordering");
+            using var request = new HttpRequestMessage(HttpMethod.Post, "orders")
+            {
+                Content = JsonContent.Create(new CreateOrderRequest(userId, productId, orderForm.Quantity))
+            };
+            request.Headers.Add("Idempotency-Key", activeIdempotencyKey.Value.ToString());
+            using var response = await client.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                orderMessage = await ReadErrorAsync(response);
+                if ((int)response.StatusCode < 500)
+                {
+                    activeIdempotencyKey = null;
+                    activeProductId = null;
+                    activeQuantity = null;
+                }
+
+                return;
+            }
+
+            currentOrder = await response.Content.ReadFromJsonAsync<OrderResponse>()
+                ?? throw new InvalidDataException("Ordering returned an empty order response.");
+            orderMessage = "Order accepted. Inventory confirmation may take a moment.";
+            activeIdempotencyKey = null;
+            activeProductId = null;
+            activeQuantity = null;
+        }
+        catch (HttpRequestException exception)
+        {
+            orderMessage = $"Ordering could not be reached. Retry the same product and quantity. {exception.Message}";
+        }
+        finally
+        {
+            isPlacingOrder = false;
+        }
+    }
+
+    private async Task RefreshOrderAsync()
+    {
+        if (currentOrder is null)
+        {
+            return;
+        }
+
+        isRefreshingOrder = true;
+        orderMessage = null;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("ordering");
+            using var response = await client.GetAsync($"orders/{currentOrder.Id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                orderMessage = await ReadErrorAsync(response);
+                return;
+            }
+
+            currentOrder = await response.Content.ReadFromJsonAsync<OrderResponse>()
+                ?? throw new InvalidDataException("Ordering returned an empty order response.");
+        }
+        catch (HttpRequestException exception)
+        {
+            orderMessage = $"Ordering could not be reached. {exception.Message}";
+        }
+        finally
+        {
+            isRefreshingOrder = false;
+        }
+    }
+
+    private void SelectProduct(Guid productId) => selectedProductId = productId.ToString();
+
+    private static string StatusClass(string status) => status switch
+    {
+        "Confirmed" => "status-success",
+        "Rejected" => "status-failure",
+        _ => "status-pending"
+    };
+
+    private static async Task<string> ReadErrorAsync(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return $"Request failed with status {(int)response.StatusCode}.";
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+            if (root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Object)
+            {
+                var messages = errors.EnumerateObject()
+                    .SelectMany(error => error.Value.EnumerateArray().Select(message => message.GetString()))
+                    .Where(message => !string.IsNullOrWhiteSpace(message));
+                return string.Join(" ", messages);
+            }
+
+            if (root.TryGetProperty("detail", out var detail) && detail.ValueKind == JsonValueKind.String)
+            {
+                return detail.GetString()!;
+            }
+
+            if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String)
+            {
+                return error.GetString()!;
+            }
+        }
+        catch (JsonException)
+        {
+            return body;
+        }
+
+        return $"Request failed with status {(int)response.StatusCode}.";
+    }
+
+    private sealed class ProductForm
+    {
+        public string Name { get; set; } = "";
+        public decimal Price { get; set; }
+    }
+
+    private sealed class StockForm
+    {
+        public int AvailableQuantity { get; set; }
+    }
+
+    private sealed class OrderForm
+    {
+        public int Quantity { get; set; } = 1;
+    }
+
+    private sealed record CreateProductRequest(string Name, decimal Price);
+    private sealed record ProductResponse(Guid Id, string Name, decimal Price);
+    private sealed record SetInventoryRequest(int AvailableQuantity);
+    private sealed record CreateOrderRequest(Guid UserId, Guid ProductId, int Quantity);
+    private sealed record OrderResponse(
+        Guid Id,
+        Guid UserId,
+        Guid ProductId,
+        int Quantity,
+        decimal UnitPrice,
+        string Status,
+        string? FailureReason);
+}

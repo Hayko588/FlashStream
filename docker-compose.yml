@@ -2,25 +2,16 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
     ports:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init-databases.sql:/docker-entrypoint-initdb.d/01-init-databases.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -39,7 +30,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
       KAFKA_NUM_PARTITIONS: 3
       KAFKA_LOG_DIRS: /var/lib/kafka/data
       KAFKA_CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
@@ -47,42 +38,103 @@ services:
       - "127.0.0.1:${KAFKA_HOST_PORT:-9092}:9092"
     volumes:
       - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
-  api:
+  kafka-init:
+    image: apache/kafka:3.9.0
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory-reservation-requests --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory-reservation-results --partitions 3 --replication-factor 1
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  catalog:
     build:
       context: .
-      dockerfile: FlashStream.Api/Dockerfile
+      dockerfile: FlashStream.Catalog/Dockerfile
     environment:
-      ASPNETCORE_URLS: http://+:8080
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:?Set POSTGRES_DB};Username=${POSTGRES_USER:?Set POSTGRES_USER};Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
-      Redis__ConnectionString: redis:6379
-      Kafka__BootstrapServers: kafka:9092
-      Authentication__Authority: ${JWT_AUTHORITY:?Set JWT_AUTHORITY to your HTTPS identity-provider URL}
-      Authentication__Audience: ${JWT_AUDIENCE:?Set JWT_AUDIENCE}
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Catalog: Host=postgres;Port=5432;Database=flashstream_catalog;Username=${POSTGRES_USER:?Set POSTGRES_USER};Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
-      kafka:
-        condition: service_started
     ports:
-      - "127.0.0.1:${API_HOST_PORT:-8080}:8080"
+      - "127.0.0.1:${CATALOG_HOST_PORT:-8081}:8080"
 
-  worker:
+  ordering:
     build:
       context: .
-      dockerfile: FlashStream.Worker/Dockerfile
+      dockerfile: FlashStream.Ordering/Dockerfile
     environment:
-      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:?Set POSTGRES_DB};Username=${POSTGRES_USER:?Set POSTGRES_USER};Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
-      Redis__ConnectionString: redis:6379
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Ordering: Host=postgres;Port=5432;Database=flashstream_ordering;Username=${POSTGRES_USER:?Set POSTGRES_USER};Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      Services__CatalogBaseUrl: http://catalog:8080/
       Kafka__BootstrapServers: kafka:9092
+      Kafka__InventoryReservationRequestsTopic: inventory-reservation-requests
+      Kafka__InventoryReservationResultsTopic: inventory-reservation-results
+      Kafka__OrderingConsumerGroup: flashstream-ordering
+      Order__MaximumQuantity: ${ORDER_MAXIMUM_QUANTITY:-100}
     depends_on:
-      api:
+      postgres:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      catalog:
         condition: service_started
-      kafka:
+    ports:
+      - "127.0.0.1:${ORDERING_HOST_PORT:-8080}:8080"
+
+  inventory:
+    build:
+      context: .
+      dockerfile: FlashStream.Inventory/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Inventory: Host=postgres;Port=5432;Database=flashstream_inventory;Username=${POSTGRES_USER:?Set POSTGRES_USER};Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      Kafka__BootstrapServers: kafka:9092
+      Kafka__InventoryReservationRequestsTopic: inventory-reservation-requests
+      Kafka__InventoryReservationResultsTopic: inventory-reservation-results
+      Kafka__InventoryConsumerGroup: flashstream-inventory
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${INVENTORY_HOST_PORT:-8082}:8080"
+
+  web:
+    build:
+      context: .
+      dockerfile: FlashStream.Web/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      Order__MaximumQuantity: ${ORDER_MAXIMUM_QUANTITY:-100}
+      Services__CatalogBaseUrl: http://catalog:8080/
+      Services__OrderingBaseUrl: http://ordering:8080/
+      Services__InventoryBaseUrl: http://inventory:8080/
+    depends_on:
+      catalog:
         condition: service_started
+      ordering:
+        condition: service_started
+      inventory:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-8083}:8080"
 
 volumes:
   postgres-data:

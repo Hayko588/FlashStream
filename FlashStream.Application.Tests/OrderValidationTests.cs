@@ -3,7 +3,13 @@ using FlashStream.Api.Validation;
 using FlashStream.Application.Configuration;
 using FlashStream.Application.Contracts;
 using FlashStream.Application.Validation;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Mvc.ModelBinding.Validation;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FlashStream.Application.Tests;
 
@@ -42,11 +48,31 @@ public sealed class OrderValidationTests
     public async Task ApiRequestValidatorRejectsEmptyProductAndOutOfPolicyQuantity()
     {
         var validator = new CreateOrderRequestValidator(Options.Create(OrderPolicy));
-        var request = new CreateOrderRequest(Guid.Empty, 11);
+        var request = new CreateOrderRequest(Guid.Empty, Guid.Empty, 11);
 
         var result = await validator.ValidateAsync(request);
 
+        Assert.Contains(result.Errors, error => error.PropertyName == nameof(request.UserId));
         Assert.Contains(result.Errors, error => error.PropertyName == nameof(request.ProductId));
         Assert.Contains(result.Errors, error => error.PropertyName == nameof(request.Quantity));
+    }
+
+    [Fact]
+    public void MvcRecordValidationMetadataDoesNotThrow()
+    {
+        using var services = new ServiceCollection()
+            .AddLogging()
+            .AddControllers()
+            .Services
+            .BuildServiceProvider();
+        var httpContext = new DefaultHttpContext { RequestServices = services };
+        var actionContext = new ActionContext(httpContext, new RouteData(), new ActionDescriptor());
+        var validator = services.GetRequiredService<IObjectModelValidator>();
+
+        validator.Validate(
+            actionContext,
+            new ValidationStateDictionary(),
+            string.Empty,
+            new CreateOrderRequest(Guid.NewGuid(), Guid.NewGuid(), 1));
     }
 }

@@ -17,6 +17,3 @@ public sealed class OrderRateLimitExceededException(int retryAfterSeconds)
 
 public sealed class RateLimiterUnavailableException(Exception innerException)
     : Exception("The order rate limiter is unavailable.", innerException);
-
-public sealed class InvalidUserClaimException()
-    : Exception("The authenticated identity does not contain a valid user identifier.");

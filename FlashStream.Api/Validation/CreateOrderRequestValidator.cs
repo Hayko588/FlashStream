@@ -9,6 +9,7 @@ public sealed class CreateOrderRequestValidator : AbstractValidator<CreateOrderR
 {
     public CreateOrderRequestValidator(IOptions<OrderPolicySettings> policy)
     {
+        RuleFor(request => request.UserId).NotEmpty();
         RuleFor(request => request.ProductId).NotEmpty();
         RuleFor(request => request.Quantity)
             .InclusiveBetween(1, policy.Value.MaximumQuantity);

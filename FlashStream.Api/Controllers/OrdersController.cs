@@ -1,14 +1,11 @@
-using System.Security.Claims;
 using FlashStream.Api.Models;
 using FlashStream.Application.Contracts;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace FlashStream.Api.Controllers;
 
 [ApiController]
-[Authorize]
 [Route("orders")]
 public sealed class OrdersController(IOrderService orderService) : ControllerBase
 {
@@ -25,7 +22,7 @@ public sealed class OrdersController(IOrderService orderService) : ControllerBas
         CancellationToken cancellationToken)
     {
         var command = new CreateOrderCommand(
-            GetAuthenticatedUserId(),
+            request.UserId,
             request.ProductId,
             request.Quantity,
             idempotencyKey.ToString());
@@ -40,15 +37,7 @@ public sealed class OrdersController(IOrderService orderService) : ControllerBas
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Get(Guid orderId, CancellationToken cancellationToken)
     {
-        var order = await orderService.GetAsync(orderId, GetAuthenticatedUserId(), cancellationToken);
+        var order = await orderService.GetAsync(orderId, cancellationToken);
         return order is null ? NotFound() : Ok(order);
-    }
-
-    private Guid GetAuthenticatedUserId()
-    {
-        var userId = User.FindFirstValue("sub") ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
-        return Guid.TryParse(userId, out var parsedUserId)
-            ? parsedUserId
-            : throw new InvalidUserClaimException();
     }
 }

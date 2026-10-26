@@ -1,0 +1,6 @@
+@FlashStream.Catalog_HostAddress = http://localhost:5163
+
+GET {{FlashStream.Catalog_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

@@ -29,8 +29,6 @@ public sealed class ProblemDetailsExceptionHandler(
                 (StatusCodes.Status429TooManyRequests, "Rate limit exceeded.", null),
             RateLimiterUnavailableException =>
                 (StatusCodes.Status503ServiceUnavailable, "Service temporarily unavailable.", null),
-            InvalidUserClaimException =>
-                (StatusCodes.Status403Forbidden, "Forbidden.", null),
             _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred.", null)
         };
 

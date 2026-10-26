@@ -79,10 +79,9 @@ public sealed class OrderService(
 
     public async Task<OrderResponse?> GetAsync(
         Guid orderId,
-        Guid userId,
         CancellationToken cancellationToken)
     {
-        var order = await orders.GetByIdForUserAsync(orderId, userId, cancellationToken);
+        var order = await orders.GetByIdAsync(orderId, cancellationToken);
         return order is null ? null : ToResponse(order);
     }
 
